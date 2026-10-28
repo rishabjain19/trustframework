@@ -4,7 +4,7 @@ An empirical implementation and evaluation platform for the **TRUST Framework** 
 
 ---
 
-## 📌 Project Overview
+##  Project Overview
 
 This project provides a full end-to-end implementation of an at-risk learner dashboard evaluated against the TRUST framework metrics:
 
@@ -30,26 +30,27 @@ This project provides a full end-to-end implementation of an at-risk learner das
 
 ---
 
-## 🏗️ Project Architecture
+## Project Architecture
 
 ```text
 trustframework/
 ├── data/
-│   └── student-mat.csv          # UCI Student Performance math cohort (395 records)
+│   └── student-mat.csv          
 ├── logs/
-│   ├── actions.csv              # Logged educator decisions (Approve, Adapt, Override)
-│   └── predictions.csv          # Predictions and top SHAP explanations
+│   ├── actions.csv             
+│   └── predictions.csv          
 ├── outputs/
-│   ├── four_condition_results.csv # 4-condition TRUST benchmark table
-│   ├── four_condition_results.png # Comparative visualization chart
-│   ├── metrics.json             # Accuracy, recall, and ROC-AUC
-│   ├── model.pkl                # Trained model artifact
-│   ├── predictions.csv          # Exported predictions for UI consumption
-│   └── shap_explanations.csv    # Full SHAP attribution values
-├── model.py                     # Model training, inference, and SHAP explanations
-├── trust.py                     # Mathematical TRUST scoring engine & Eq. 9 check
-├── simulate.py                  # 4-condition simulation experiment & plot generation
-├── app.py                       # Streamlit educator dashboard
-├── notes.md                     # Core ML & framework concepts defense sheet
-└── requirements.txt             # Project dependencies
-```
+│   ├── four_condition_results.csv 
+│   ├── four_condition_results.png 
+│   ├── metrics.json            
+│   ├── model.pkl               
+│   ├── predictions.csv          
+│   └── shap_explanations.csv    
+├── model.py                    
+├── trust.py                    
+├── simulate.py                  
+├── app.py                      
+├── notes.md                     
+└── requirements.txt             
+<img width="657" height="747" alt="image" src="https://github.com/user-attachments/assets/ac5fa518-b302-486b-a17b-9578c68b188d" />
+
