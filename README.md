@@ -1,72 +1,55 @@
-# TRUST Framework
+# TRUST Framework: Explainable AI & Human-in-the-Loop At-Risk Learner System
 
-This repository contains the two-person student-risk and educator-trust project.
+An empirical implementation and evaluation platform for the **TRUST Framework** in educational AI. This project operationalizes an **Early-Warning Student Risk Prediction System** paired with **Local Explainability (SHAP)**, human educator action controls (**Approve / Adapt / Override**), and an automated **TRUST Mathematical Scoring Engine** to evaluate human-AI collaborative decision-making.
 
-## Team boundary
+---
 
-- **Person A (ML/TRUST):** `model.py`, `trust.py`, `simulate.py`, `data/`, and `outputs/`.
-- **Person B (dashboard/report):** `app.py`, `report/`, `demo/`, and `logs/actions.csv`.
+## 📌 Project Overview
 
-Both people may read the other person's files, but should only edit their own
-files after agreeing on the interfaces below.
+This project provides a full end-to-end implementation of an at-risk learner dashboard evaluated against the TRUST framework metrics:
 
-## Shared file contract
+1. **At-Risk Learner Prediction**:
+   - Uses the **UCI Student Performance Dataset** (`data/student-mat.csv`) to predict student academic failure risk ($G3 < 10$).
+   - Explicitly drops interim period grades ($G1, G2$) to prevent data leakage, learning behavioral and academic risk factors.
+   - Fits an interpretable Logistic Regression model producing continuous risk probabilities and calibrated confidence scores.
 
-### `outputs/predictions.csv` (written by Person A)
+2. **Explainable AI (XAI) Layer**:
+   - Implements **SHAP (SHapley Additive exPlanations)** via `shap.LinearExplainer`.
+   - Extracts and ranks the top 3 contributing risk factors for each individual student (e.g., past failures, high absences, study time) to explain _why_ an alert was generated.
 
-The file must contain these columns, in this order:
+3. **Human-in-the-Loop (HITL) Dashboard**:
+   - A Streamlit web dashboard where educators review predicted student risk, examine confidence and local SHAP explanations, and submit contextual intervention actions (`Approve`, `Adapt`, `Override`).
+   - Every educator interaction is recorded into `logs/actions.csv` for auditability and trust scoring.
+
+4. **TRUST Evaluation Engine**:
+   - Implements the mathematical formulations for the 5 TRUST pillars: **Transparency ($T$)**, **Reliability ($R$)**, **Usability ($U$)**, **Shared Control ($S$)**, and **Task Effectiveness ($E$)**.
+   - Aggregates scores into an overall composite index ($\Gamma F$):
+     $$\Gamma F = w_T \cdot T + w_R \cdot R + w_U \cdot U + w_S \cdot S + w_E \cdot E$$
+   - Enforces the **Eq. 9 safety guardrail** ($\theta = 0.60$), flagging any component failing to meet minimum operational safety standards.
+   - Evaluates system reliance across four experimental conditions via simulated educator decision-making.
+
+---
+
+## 🏗️ Project Architecture
 
 ```text
-student_id,risk_prob,confidence,top_factor_1,top_factor_2,top_factor_3
+trustframework/
+├── data/
+│   └── student-mat.csv          # UCI Student Performance math cohort (395 records)
+├── logs/
+│   ├── actions.csv              # Logged educator decisions (Approve, Adapt, Override)
+│   └── predictions.csv          # Predictions and top SHAP explanations
+├── outputs/
+│   ├── four_condition_results.csv # 4-condition TRUST benchmark table
+│   ├── four_condition_results.png # Comparative visualization chart
+│   ├── metrics.json             # Accuracy, recall, and ROC-AUC
+│   ├── model.pkl                # Trained model artifact
+│   ├── predictions.csv          # Exported predictions for UI consumption
+│   └── shap_explanations.csv    # Full SHAP attribution values
+├── model.py                     # Model training, inference, and SHAP explanations
+├── trust.py                     # Mathematical TRUST scoring engine & Eq. 9 check
+├── simulate.py                  # 4-condition simulation experiment & plot generation
+├── app.py                       # Streamlit educator dashboard
+├── notes.md                     # Core ML & framework concepts defense sheet
+└── requirements.txt             # Project dependencies
 ```
-
-- `student_id`: stable string identifier.
-- `risk_prob`: floating-point probability in `[0, 1]` that the student is at risk.
-- `confidence`: floating-point model confidence in `[0, 1]`.
-- `top_factor_1..3`: human-readable explanation names.
-
-### `logs/actions.csv` (written by Person B, read by Person A)
-
-The file must contain these columns, in this order:
-
-```text
-student_id,ai_flag,educator_action,timestamp
-```
-
-- `ai_flag`: `1` when the dashboard displayed an AI risk flag, otherwise `0`.
-- `educator_action`: one of `Approve`, `Adapt`, or `Override`.
-- `timestamp`: ISO-8601 timestamp.
-
-Person A's TRUST scorer tolerates a missing or empty actions file so the ML
-pipeline can run before the dashboard exists.
-
-## Setup
-
-```powershell
-cd .\trustframework
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python model.py
-python simulate.py
-python trust.py
-```
-
-If `data/students.csv` is absent, `model.py` creates a deterministic demo
-dataset and reports that fact. Replace it with real data before final results.
-
-## Execution plan
-
-1. Freeze the two CSV contracts above.
-2. Train and evaluate the at-risk model and write `outputs/predictions.csv`.
-3. Generate `outputs/shap_explanations.csv` (SHAP when installed, with an
-   explicit model-coefficient fallback for environments where SHAP is absent).
-4. Score dashboard actions with the TRUST functions in `trust.py`.
-5. Run the four simulated educator conditions and write the results table and
-   chart.
-6. Person B connects the Streamlit dashboard to the same files and writes
-   `logs/actions.csv`.
-7. Run the end-to-end validation before the report/demo.
-
-The current branch is intentionally uncommitted because the remote repository
-was empty when it was cloned.
