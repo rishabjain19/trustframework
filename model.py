@@ -1,30 +1,25 @@
-"""Train the student-risk model and publish the Person A prediction contract."""
-
 from __future__ import annotations
-
+import os
+from pathlib import Path
 import json
 import pickle
-from pathlib import Path
-from typing import Final
-
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, recall_score
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, recall_score, roc_auc_score, classification_report
+import shap
 
-ROOT: Final = Path(__file__).resolve().parent
-DATA_DIR: Final = ROOT / "data"
-OUTPUT_DIR: Final = ROOT / "outputs"
-DATA_PATH: Final = DATA_DIR / "students.csv"
-PREDICTIONS_PATH: Final = OUTPUT_DIR / "predictions.csv"
-EXPLANATIONS_PATH: Final = OUTPUT_DIR / "shap_explanations.csv"
-MODEL_PATH: Final = OUTPUT_DIR / "model.pkl"
-FEATURES: Final = ["attendance_rate", "assignment_score", "prior_gpa", "support_requests"]
-CONTRACT_COLUMNS: Final = [
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
+OUTPUT_DIR = ROOT / "outputs"
+UCI_PATH = DATA_DIR / "student-mat.csv"
+FALLBACK_PATH = DATA_DIR / "students.csv"
+PREDICTIONS_PATH = OUTPUT_DIR / "predictions.csv"
+EXPLANATIONS_PATH = OUTPUT_DIR / "shap_explanations.csv"
+MODEL_PATH = OUTPUT_DIR / "model.pkl"
+
+CONTRACT_COLUMNS = [
     "student_id",
     "risk_prob",
     "confidence",
@@ -34,145 +29,115 @@ CONTRACT_COLUMNS: Final = [
 ]
 
 
-def _demo_data() -> pd.DataFrame:
-    """Create reproducible data for development before real data is available."""
-    rng = np.random.default_rng(42)
-    rows = 120
-    attendance = rng.uniform(0.45, 1.0, rows)
-    assignments = rng.uniform(35, 100, rows)
-    gpa = rng.uniform(2.0, 4.0, rows)
-    support = rng.poisson(1.4, rows).clip(0, 6)
-    risk_score = (
-        2.2 * (1 - attendance)
-        + 0.018 * (70 - assignments).clip(min=0)
-        + 0.9 * (3.0 - gpa).clip(min=0)
-        + 0.12 * support
-    )
-    at_risk = (risk_score > np.quantile(risk_score, 0.62)).astype(int)
-    return pd.DataFrame(
-        {
-            "student_id": [f"S{i:04d}" for i in range(1, rows + 1)],
-            "attendance_rate": attendance.round(4),
-            "assignment_score": assignments.round(2),
-            "prior_gpa": gpa.round(2),
-            "support_requests": support,
-            "at_risk": at_risk,
-        }
-    )
+def load_dataset() -> tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    
+    target_file = None
+    if UCI_PATH.exists():
+        target_file = UCI_PATH
+    elif FALLBACK_PATH.exists():
+        target_file = FALLBACK_PATH
 
-
-def load_data() -> pd.DataFrame:
-    """Load real data when present, otherwise create a clearly labelled demo set."""
-    if DATA_PATH.exists():
-        frame = pd.read_csv(DATA_PATH)
+    if target_file:
+        with open(target_file, "r", encoding="utf-8") as f:
+            first_line = f.readline()
+            sep = ";" if ";" in first_line else ","
+        df = pd.read_csv(target_file, sep=sep)
+        print(f"Loaded dataset from: {target_file} (delimiter: '{sep}')")
     else:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        frame = _demo_data()
-        frame.to_csv(DATA_DIR / "students_demo.csv", index=False)
-        print(f"No {DATA_PATH.name} found; using deterministic demo data.")
-    missing = set(["student_id", *FEATURES]) - set(frame.columns)
-    if missing:
-        raise ValueError(f"{DATA_PATH} is missing required columns: {sorted(missing)}")
-    if "at_risk" not in frame.columns:
-        frame = frame.copy()
-        frame["at_risk"] = (
-            (frame["attendance_rate"] < 0.75)
-            | (frame["assignment_score"] < 55)
-            | (frame["prior_gpa"] < 2.5)
-        ).astype(int)
-    if frame["at_risk"].nunique() < 2:
-        raise ValueError("The at_risk label must contain both 0 and 1 classes.")
-    return frame
+        print("No student dataset found; generating representative demo cohort.")
+        rng = np.random.default_rng(42)
+        n = 395
+        df = pd.DataFrame({
+            "age": rng.integers(15, 22, size=n),
+            "studytime": rng.choice([1, 2, 3, 4], size=n, p=[0.25, 0.50, 0.15, 0.10]),
+            "failures": rng.choice([0, 1, 2, 3], size=n, p=[0.78, 0.13, 0.05, 0.04]),
+            "absences": rng.poisson(5, size=n),
+            "freetime": rng.integers(1, 6, size=n),
+            "goout": rng.integers(1, 6, size=n),
+            "Dalc": rng.integers(1, 6, size=n),
+            "Walc": rng.integers(1, 6, size=n),
+            "health": rng.integers(1, 6, size=n),
+            "higher": rng.choice(["yes", "no"], size=n, p=[0.90, 0.10]),
+            "G1": rng.integers(3, 19, size=n),
+            "G2": rng.integers(3, 19, size=n),
+            "G3": rng.integers(0, 20, size=n)
+        })
+        df.to_csv(FALLBACK_PATH, index=False)
+
+    df.columns = df.columns.str.strip()
+    df["at_risk"] = (df["G3"] < 10).astype(int)
+    drop_cols = [c for c in ["G1", "G2", "G3", "at_risk"] if c in df.columns]
+    X_raw = df.drop(columns=drop_cols)
+    y = df["at_risk"]
+    X = pd.get_dummies(X_raw, drop_first=True)
+    return X, y, df
 
 
-def _top_factors(model: Pipeline, row: pd.DataFrame) -> list[str]:
-    """Return three factors with the largest absolute local linear contribution."""
-    preprocessor = model.named_steps["preprocessor"]
-    classifier = model.named_steps["classifier"]
-    transformed = preprocessor.transform(row)
-    values = np.asarray(transformed).ravel()
-    coefficients = classifier.coef_[0]
-    names = preprocessor.get_feature_names_out()
-    contributions = np.abs(values * coefficients)
-    ranked = np.argsort(contributions)[::-1]
-    selected: list[str] = []
-    for index in ranked:
-        name = names[index].replace("num__", "").replace("cat__", "")
-        if name not in selected:
-            selected.append(name)
-        if len(selected) == 3:
-            break
-    return selected + [""] * (3 - len(selected))
-
-
-def train_and_publish() -> dict[str, float]:
-    """Train, evaluate, explain, and publish predictions using the fixed contract."""
-    frame = load_data()
-    x_train, x_test, y_train, y_test = train_test_split(
-        frame[FEATURES], frame["at_risk"], test_size=0.25, random_state=42, stratify=frame["at_risk"]
-    )
-    preprocessor = ColumnTransformer(
-        [("num", StandardScaler(), FEATURES)],
-        remainder="drop",
-    )
-    model = Pipeline(
-        [
-            ("preprocessor", preprocessor),
-            ("classifier", LogisticRegression(max_iter=1000, random_state=42)),
-        ]
-    )
-    model.fit(x_train, y_train)
-    test_prob = model.predict_proba(x_test)[:, 1]
-    test_pred = (test_prob >= 0.5).astype(int)
-    metrics = {
-        "accuracy": float(accuracy_score(y_test, test_pred)),
-        "recall": float(recall_score(y_test, test_pred, zero_division=0)),
-    }
-    print(classification_report(y_test, test_pred, zero_division=0))
-
-    all_prob = model.predict_proba(frame[FEATURES])[:, 1]
-    confidence = np.maximum(all_prob, 1 - all_prob)
-    factors = [_top_factors(model, frame.iloc[[index]][FEATURES]) for index in range(len(frame))]
-    predictions = pd.DataFrame(
-        {
-            "student_id": frame["student_id"].astype(str),
-            "risk_prob": np.round(all_prob, 6),
-            "confidence": np.round(confidence, 6),
-            "top_factor_1": [factor[0] for factor in factors],
-            "top_factor_2": [factor[1] for factor in factors],
-            "top_factor_3": [factor[2] for factor in factors],
-        }
-    )
+def train_and_explain():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    predictions[CONTRACT_COLUMNS].to_csv(PREDICTIONS_PATH, index=False)
-    with MODEL_PATH.open("wb") as handle:
-        pickle.dump(model, handle)
-    _write_explanations(model, frame)
-    (OUTPUT_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    X, y, df_raw = load_dataset()
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.20, random_state=42, stratify=y
+    )
+
+    model = LogisticRegression(max_iter=1000, random_state=42)
+    model.fit(X_train, y_train)
+
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
+
+    acc = accuracy_score(y_test, y_pred)
+    rec = recall_score(y_test, y_pred, zero_division=0)
+    auc = roc_auc_score(y_test, y_prob)
+
+    print("\n--- MODEL PERFORMANCE ---")
+    print(f"Accuracy: {acc:.3f} | Recall: {rec:.3f} | ROC-AUC: {auc:.3f}")
+    print(classification_report(y_test, y_pred, zero_division=0))
+
+    all_prob = model.predict_proba(X)[:, 1]
+    confidence = np.maximum(all_prob, 1 - all_prob)
+
+    explainer = shap.LinearExplainer(model, X)
+    shap_vals = explainer.shap_values(X)
+    feature_names = np.array(X.columns)
+
+    top_1, top_2, top_3 = [], [], []
+    for i in range(len(X)):
+        ranked = np.argsort(-shap_vals[i])
+        top_1.append(feature_names[ranked[0]])
+        top_2.append(feature_names[ranked[1]])
+        top_3.append(feature_names[ranked[2]])
+
+    student_ids = [f"STU_{i+1:03d}" for i in range(len(X))]
+
+    predictions_df = pd.DataFrame({
+        "student_id": student_ids,
+        "risk_prob": np.round(all_prob, 4),
+        "confidence": np.round(confidence, 4),
+        "top_factor_1": top_1,
+        "top_factor_2": top_2,
+        "top_factor_3": top_3,
+    })
+
+    predictions_df[CONTRACT_COLUMNS].to_csv(PREDICTIONS_PATH, index=False)
     print(f"Wrote {PREDICTIONS_PATH}")
+
+    with open(MODEL_PATH, "wb") as f:
+        pickle.dump(model, f)
+
+    shap_df = pd.DataFrame(shap_vals, columns=feature_names)
+    shap_df.insert(0, "student_id", student_ids)
+    shap_df.to_csv(EXPLANATIONS_PATH, index=False)
+    print(f"Wrote {EXPLANATIONS_PATH}")
+
+    metrics = {"accuracy": float(acc), "recall": float(rec), "auc": float(auc)}
+    with open(OUTPUT_DIR / "metrics.json", "w") as f:
+        json.dump(metrics, f, indent=2)
+
     return metrics
 
 
-def _write_explanations(model: Pipeline, frame: pd.DataFrame) -> None:
-    """Persist SHAP values when available, otherwise persist equivalent linear values."""
-    values = model.named_steps["preprocessor"].transform(frame[FEATURES])
-    names = model.named_steps["preprocessor"].get_feature_names_out()
-    classifier = model.named_steps["classifier"]
-    method = "model_coefficient_contribution"
-    shap_values = np.asarray(values) * classifier.coef_[0]
-    try:
-        import shap
-
-        explainer = shap.LinearExplainer(model.named_steps["classifier"], values)
-        shap_values = np.asarray(explainer.shap_values(values))
-        method = "shap.LinearExplainer"
-    except ImportError:
-        print("SHAP is not installed; saved coefficient contributions with an explicit method label.")
-    explanation = pd.DataFrame(shap_values, columns=names)
-    explanation.insert(0, "student_id", frame["student_id"].astype(str).to_numpy())
-    explanation.insert(1, "method", method)
-    explanation.to_csv(EXPLANATIONS_PATH, index=False)
-
-
 if __name__ == "__main__":
-    train_and_publish()
+    train_and_explain()
