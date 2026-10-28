@@ -52,5 +52,5 @@ trustframework/
 ├── app.py                      
 ├── notes.md                     
 └── requirements.txt             
-<img width="657" height="747" alt="image" src="https://github.com/user-attachments/assets/ac5fa518-b302-486b-a17b-9578c68b188d" />
+![Project Screenshot](https://github.com/user-attachments/assets/ac5fa518-b302-486b-a17b-9578c68b188d)
 
