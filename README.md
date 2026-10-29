@@ -32,26 +32,27 @@ This project provides a full end-to-end implementation of an at-risk learner das
 
 ## Project Architecture
 
+```text
 trustframework/
 ├── data/
-│   └── student-mat.csv          
+│   └── student-mat.csv 
 ├── logs/
-│   ├── actions.csv             
-│   └── predictions.csv          
+│   ├── actions.csv 
+│   └── predictions.csv 
 ├── outputs/
-│   ├── four_condition_results.csv 
-│   ├── four_condition_results.png 
-│   ├── metrics.json            
-│   ├── model.pkl               
-│   ├── predictions.csv          
-│   └── shap_explanations.csv    
-├── model.py                    
-├── trust.py                    
-├── simulate.py                  
-├── app.py                      
-├── notes.md                     
+│   ├── four_condition_results.csv
+│   ├── four_condition_results.png
+│   ├── metrics.json 
+│   ├── model.pkl 
+│   ├── predictions.csv 
+│   └── shap_explanations.csv 
+├── model.py 
+├── trust.py 
+├── simulate.py 
+├── app.py 
+├── notes.md 
 └── requirements.txt
-           
+```
 <p align="center">
   <img src="https://github.com/user-attachments/assets/ac5fa518-b302-486b-a17b-9578c68b188d" width="500" alt="Project Screenshot">
 </p>
